@@ -195,6 +195,11 @@ namespace ArchonSoulGamepad
             return new Rect(xMin, yMin, xMax - xMin, yMax - yMin);
         }
 
+        public static bool TryGetScreenRectFor(GameObject go, out Rect rect)
+        {
+            return TryGetScreenRect(go, out rect);
+        }
+
         /// <summary>Screen position of an arbitrary transform, using its canvas camera.</summary>
         public static bool TryGetScreenPoint(Transform t, out Vector2 point)
         {

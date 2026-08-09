@@ -373,6 +373,100 @@ namespace ArchonSoulGamepad
             }
         }
 
+        private static DiceModificationScreenController _modCtrl;
+        private static float _nextModCtrlProbe;
+        private static System.Reflection.FieldInfo _componentDraggingField;
+
+        private static DiceModificationScreenController GetModController()
+        {
+            if (_modCtrl != null) return _modCtrl;
+            if (Time.unscaledTime < _nextModCtrlProbe) return null;
+
+            _nextModCtrlProbe = Time.unscaledTime + 1f;
+            try { _modCtrl = UnityEngine.Object.FindFirstObjectByType<DiceModificationScreenController>(); }
+            catch { _modCtrl = null; }
+            return _modCtrl;
+        }
+
+        /// <summary>
+        /// Drop targets for a face, rune or body being dragged on the modify screen.
+        /// Faces and runes only ever go into a face slot; a body only goes onto the
+        /// die itself. Mirrors where the game actually resolves each drop, so a
+        /// component can never be aimed at something that would silently reject it.
+        /// </summary>
+        public static bool TryGetDraggedComponentTargets(List<GameObject> into)
+        {
+            into.Clear();
+            if (!Available) return false;
+
+            var ctrl = GetModController();
+            if (ctrl == null) return false;
+
+            try
+            {
+                if (_componentDraggingField == null)
+                    _componentDraggingField = typeof(ModificationComponentDrag).GetField("dragging",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (_componentDraggingField == null) return false;
+
+                var drags = UnityEngine.Object.FindObjectsByType<ModificationComponentDrag>(FindObjectsSortMode.None);
+                ModificationComponentDrag active = null;
+                foreach (var d in drags)
+                {
+                    if (d == null) continue;
+                    if ((bool)_componentDraggingField.GetValue(d)) { active = d; break; }
+                }
+                if (active == null) return false;
+
+                if (active.componentType == ComponentPoolType.Body)
+                {
+                    var slot = ctrl.diceModifier != null && ctrl.diceModifier.diceInput != null
+                        ? ctrl.diceModifier.diceInput
+                        : ctrl.modificationSlotInput;
+                    if (slot != null) into.Add(slot.gameObject);
+                }
+                else
+                {
+                    var inputs = UnityEngine.Object.FindObjectsByType<FaceModificationInput>(FindObjectsSortMode.None);
+                    foreach (var fi in inputs)
+                    {
+                        if (fi == null || !fi.gameObject.activeInHierarchy) continue;
+                        into.Add(fi.gameObject);
+                    }
+                }
+            }
+            catch { }
+
+            return into.Count > 0;
+        }
+
+        private static readonly List<GameObject> _componentTargetProbe = new List<GameObject>();
+
+        public static bool IsDraggingComponent()
+        {
+            return TryGetDraggedComponentTargets(_componentTargetProbe);
+        }
+
+        /// <summary>
+        /// Clears every "currently hovered drop target" the game tracks. Ending a
+        /// drag with none of these set is how the game itself returns an item to
+        /// where it came from, so this is what makes cancelling possible.
+        /// </summary>
+        public static void ClearDropHoverTargets()
+        {
+            if (!Available) return;
+
+            try { GlobalVars.currentHoveredDiceInput = null; } catch { }
+            try { GlobalVars.currentHoveredInputAssigner = null; } catch { }
+
+            try
+            {
+                var ctrl = GetModController();
+                if (ctrl != null) ctrl.currentHoveredFaceModInput = null;
+            }
+            catch { }
+        }
+
         public static bool IsCarryingDice()
         {
             if (!Available) return false;

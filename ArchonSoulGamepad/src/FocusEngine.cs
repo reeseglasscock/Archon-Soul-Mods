@@ -111,8 +111,14 @@ namespace ArchonSoulGamepad
             if (!force && Time.unscaledTime < _nextScan) return;
             _nextScan = Time.unscaledTime + ScanInterval;
 
-            // A held spell takes over the whole screen's navigation.
+            // A held spell or modification component takes over navigation entirely.
             if (GameBridge.IsDraggingSpell() && BuildSpellAnchorCandidates())
+            {
+                ValidateFocus();
+                return;
+            }
+
+            if (BuildComponentDropCandidates())
             {
                 ValidateFocus();
                 return;
@@ -147,6 +153,39 @@ namespace ArchonSoulGamepad
             if (includeDiceSlots) RestrictToDropTargets();
 
             ValidateFocus();
+        }
+
+        private readonly List<GameObject> _componentTargets = new List<GameObject>();
+
+        /// <summary>
+        /// Restricts focus to the slots a dragged face, rune or body can go into.
+        /// </summary>
+        private bool BuildComponentDropCandidates()
+        {
+            if (!GameBridge.TryGetDraggedComponentTargets(_componentTargets)) return false;
+
+            _candidates.Clear();
+
+            foreach (var go in _componentTargets)
+            {
+                Rect rect;
+                if (!InteractableScanner.TryGetScreenRectFor(go, out rect)) continue;
+                if (rect.width < 2f || rect.height < 2f) continue;
+
+                var center = rect.center;
+                if (center.x < 0f || center.y < 0f || center.x > Screen.width || center.y > Screen.height) continue;
+
+                _candidates.Add(new Focusable
+                {
+                    Go = go,
+                    ScreenRect = rect,
+                    Center = center,
+                    IsDiceSlot = false,
+                    IsWidget = false
+                });
+            }
+
+            return _candidates.Count > 0;
         }
 
         private readonly List<Transform> _anchorBuffer = new List<Transform>();

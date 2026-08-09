@@ -29,7 +29,8 @@ namespace ArchonSoulGamepad
         private float _mouseMoveAccum;
         private GameObject _focusBeforeExit;
         private GameObject _lastFocused;
-        private bool _wasDraggingSpell;
+        private bool _wasDragOverride;
+        private float _cancelDragUntil;
         private bool _selfTest;
         private bool _selfTestDone;
         private float _selfTestAt;
@@ -110,26 +111,29 @@ namespace ArchonSoulGamepad
 
             bool carrying = GameBridge.IsCarryingDice();
             bool draggingSpell = GameBridge.IsDraggingSpell();
+            bool draggingComponent = GameBridge.IsDraggingComponent();
+            bool dragOverride = draggingSpell || draggingComponent;
 
-            // Picking a spell up switches navigation to the fixed slot anchors.
-            // Focus is chosen once at that moment and then held: the zone re-sorts
-            // itself continuously while a spell is held, and re-acquiring against a
-            // shifting anchor list makes the selection crawl on its own.
-            if (draggingSpell != _wasDraggingSpell)
+            // Picking a spell or a modification component up switches navigation to
+            // that item's valid destinations. Focus is chosen once at that moment
+            // and then held: these screens re-sort themselves while something is
+            // held, and re-acquiring against a shifting list makes the selection
+            // crawl on its own.
+            if (dragOverride != _wasDragOverride)
             {
-                _wasDraggingSpell = draggingSpell;
+                _wasDragOverride = dragOverride;
                 _focus.Pinned = false;
                 _focus.Rescan(carrying, force: true);
 
-                if (draggingSpell)
+                if (dragOverride)
                 {
                     _focus.AcquireNearest(_focus.Center);
                     _focus.Pinned = true;
-                    Plugin.LogDiag("spell drag started - anchored to '" +
+                    Plugin.LogDiag("drag started - anchored to '" +
                                    (_focus.Focused != null ? _focus.Focused.name : "?") + "'");
                 }
             }
-            else if (draggingSpell)
+            else if (dragOverride)
             {
                 _focus.Pinned = true;
             }
@@ -183,7 +187,7 @@ namespace ArchonSoulGamepad
 
             SuppressUiSelection();
             SyncPointer();
-            HandleButtons(carrying, draggingSpell);
+            HandleButtons(carrying, dragOverride);
             DrawHighlight();
             Diagnostics(carrying);
         }
@@ -274,6 +278,17 @@ namespace ArchonSoulGamepad
 
         private void SyncPointer()
         {
+            // While a cancel is resolving, keep the pointer away from every drop
+            // target so the item cannot be re-captured before the drag ends.
+            if (Time.unscaledTime < _cancelDragUntil)
+            {
+                VirtualPointer.Position = new Vector2(-1000f, -1000f);
+                VirtualPointer.PushToInputSystem();
+                PointerDispatcher.ClearHover();
+                GameBridge.ClearDropHoverTargets();
+                return;
+            }
+
             if (_focus.Focused == null) return;
 
             VirtualPointer.Position = _focus.Center;
@@ -317,7 +332,7 @@ namespace ArchonSoulGamepad
             return false;
         }
 
-        private void HandleButtons(bool carrying, bool draggingSpell)
+        private void HandleButtons(bool carrying, bool dragOverride)
         {
             var target = _focus.Focused;
 
@@ -327,12 +342,12 @@ namespace ArchonSoulGamepad
                 {
                     Disengage("submit");
                 }
-                else if (draggingSpell)
+                else if (dragOverride)
                 {
-                    // The game ends a spell drag from its own held-then-released
+                    // The game ends these drags from its own held-then-released
                     // mouse check, so pulse the virtual button rather than trying
                     // to reproduce its placement logic.
-                    Plugin.LogDiag("dropping spell at '" + (target != null ? target.name : "?") + "'");
+                    Plugin.LogDiag("dropping at '" + (target != null ? target.name : "?") + "'");
                     VirtualPointer.PulseLeft();
                 }
                 else if (Time.unscaledTime < _activationLockUntil)
@@ -376,8 +391,16 @@ namespace ArchonSoulGamepad
                 {
                     Disengage("cancel");
                 }
-                else if (draggingSpell)
+                else if (dragOverride)
                 {
+                    // Cancel: drop with no target hovered, which is how the game
+                    // returns an item to its origin. The pointer is parked off
+                    // screen for a few frames so nothing can re-acquire a target
+                    // before the drag actually ends.
+                    Plugin.LogDiag("cancelling drag - returning item");
+                    PointerDispatcher.ClearHover();
+                    GameBridge.ClearDropHoverTargets();
+                    _cancelDragUntil = Time.unscaledTime + 0.35f;
                     VirtualPointer.PulseLeft();
                 }
                 else if (carrying)
@@ -411,10 +434,20 @@ namespace ArchonSoulGamepad
             if (_pad.Menu)
                 Patches.QueueEscape();
 
-            if (_pad.Alt && !_engaged && target != null)
+            if (_pad.Alt && !_engaged)
             {
-                VirtualPointer.PulseRight();
-                PointerDispatcher.Click(target, _focus.Center, PointerEventData.InputButton.Right);
+                if (dragOverride)
+                {
+                    // X applies, same as A, so placing an item is consistent across
+                    // faces, runes and bodies.
+                    Plugin.LogDiag("applying at '" + (target != null ? target.name : "?") + "'");
+                    VirtualPointer.PulseLeft();
+                }
+                else if (target != null)
+                {
+                    VirtualPointer.PulseRight();
+                    PointerDispatcher.Click(target, _focus.Center, PointerEventData.InputButton.Right);
+                }
             }
 
             // Shoulders jump between groups of controls, which on the settings screen
