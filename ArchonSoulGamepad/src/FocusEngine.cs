@@ -130,7 +130,7 @@ namespace ArchonSoulGamepad
             // A screen with nothing focusable is always a bug. Immediately re-scan
             // with reject reporting so the log explains itself without anyone
             // having to reproduce it with a debug flag turned on.
-            if (_candidates.Count == 0 && Time.unscaledTime >= _nextEmptyReport)
+            if (_candidates.Count == 0 && Time.unscaledTime >= _nextEmptyReport && !GameBridge.IsDraggingComponent())
             {
                 _nextEmptyReport = Time.unscaledTime + 5f;
                 InteractableScanner.DebugRejects = true;
@@ -181,11 +181,15 @@ namespace ArchonSoulGamepad
                     ScreenRect = rect,
                     Center = center,
                     IsDiceSlot = false,
-                    IsWidget = false
+                    IsWidget = false,
+                    Navigable = true
                 });
             }
 
-            return _candidates.Count > 0;
+            // Deliberately true even with nothing to show. A face with no die to
+            // modify has nowhere to go, and leaving the candidate list empty is
+            // what stops focus falling back to the dice bag.
+            return true;
         }
 
         private readonly List<Transform> _anchorBuffer = new List<Transform>();
@@ -213,7 +217,8 @@ namespace ArchonSoulGamepad
                     ScreenRect = rect,
                     Center = sp,
                     IsDiceSlot = false,
-                    IsWidget = false
+                    IsWidget = false,
+                    Navigable = true
                 });
             }
 
@@ -256,7 +261,7 @@ namespace ArchonSoulGamepad
         /// </summary>
         private bool AutoAcquirable(int index)
         {
-            return !GameBridge.IsDestructive(_candidates[index].Go);
+            return _candidates[index].Navigable && !GameBridge.IsDestructive(_candidates[index].Go);
         }
 
         public bool Pinned;
@@ -371,7 +376,7 @@ namespace ArchonSoulGamepad
             for (int i = 0; i < _candidates.Count; i++)
             {
                 var c = _candidates[i];
-                if (c.Go == Focused) continue;
+                if (c.Go == Focused || !c.Navigable) continue;
 
                 float along = Vector2.Dot(c.Center - Center, dir);
                 if (along <= 1f) continue;
@@ -396,7 +401,7 @@ namespace ArchonSoulGamepad
             for (int i = 0; i < _candidates.Count; i++)
             {
                 var c = _candidates[i];
-                if (c.Go == Focused) continue;
+                if (c.Go == Focused || !c.Navigable) continue;
 
                 float along = Vector2.Dot(c.Center - Center, dir);
                 if (along <= 1f) continue;
@@ -439,7 +444,7 @@ namespace ArchonSoulGamepad
             for (int i = 0; i < _candidates.Count; i++)
             {
                 var c = _candidates[i];
-                if (c.Go == Focused) continue;
+                if (c.Go == Focused || !c.Navigable) continue;
 
                 float perpGap = PerpendicularGap(FocusedRect, c.ScreenRect, vertical);
                 if (perpGap > 60f) continue;
@@ -473,6 +478,7 @@ namespace ArchonSoulGamepad
 
             for (int i = 0; i < _candidates.Count; i++)
             {
+                if (!_candidates[i].Navigable) continue;
                 var parent = GroupKey(_candidates[i].Go);
                 if (parent == null) continue;
 

@@ -14,6 +14,9 @@ namespace ArchonSoulGamepad
         public Vector2 Center;
         public bool IsDiceSlot;
         public bool IsWidget;
+
+        /// <summary>False for controls that exist only as a B-button action.</summary>
+        public bool Navigable;
     }
 
     /// <summary>
@@ -138,7 +141,8 @@ namespace ArchonSoulGamepad
                         ScreenRect = rect,
                         Center = center,
                         IsDiceSlot = isSlot,
-                        IsWidget = isWidget
+                        IsWidget = isWidget,
+                        Navigable = !GameBridge.IsBackControl(go)
                     });
                 }
             }

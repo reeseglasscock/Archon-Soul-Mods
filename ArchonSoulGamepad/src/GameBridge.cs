@@ -388,42 +388,70 @@ namespace ArchonSoulGamepad
             return _modCtrl;
         }
 
-        /// <summary>
-        /// Drop targets for a face, rune or body being dragged on the modify screen.
-        /// Faces and runes only ever go into a face slot; a body only goes onto the
-        /// die itself. Mirrors where the game actually resolves each drop, so a
-        /// component can never be aimed at something that would silently reject it.
-        /// </summary>
-        public static bool TryGetDraggedComponentTargets(List<GameObject> into)
-        {
-            into.Clear();
-            if (!Available) return false;
+        private static ModificationComponentDrag _activeComponentDrag;
+        private static int _activeComponentDragFrame = -1;
 
-            var ctrl = GetModController();
-            if (ctrl == null) return false;
+        /// <summary>
+        /// The component currently being dragged, regardless of whether it has
+        /// anywhere valid to go. Detecting the drag and finding its destinations
+        /// must stay separate: with no die in the edit slot there are no face slots,
+        /// and conflating the two made the mod conclude nothing was being dragged.
+        /// </summary>
+        private static ModificationComponentDrag GetActiveComponentDrag()
+        {
+            if (_activeComponentDragFrame == Time.frameCount) return _activeComponentDrag;
+            _activeComponentDragFrame = Time.frameCount;
+            _activeComponentDrag = null;
+
+            if (!Available) return null;
+            if (GetModController() == null) return null;
 
             try
             {
                 if (_componentDraggingField == null)
                     _componentDraggingField = typeof(ModificationComponentDrag).GetField("dragging",
                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (_componentDraggingField == null) return false;
+                if (_componentDraggingField == null) return null;
 
                 var drags = UnityEngine.Object.FindObjectsByType<ModificationComponentDrag>(FindObjectsSortMode.None);
-                ModificationComponentDrag active = null;
                 foreach (var d in drags)
                 {
                     if (d == null) continue;
-                    if ((bool)_componentDraggingField.GetValue(d)) { active = d; break; }
+                    if ((bool)_componentDraggingField.GetValue(d)) { _activeComponentDrag = d; break; }
                 }
-                if (active == null) return false;
+            }
+            catch { }
 
+            return _activeComponentDrag;
+        }
+
+        /// <summary>
+        /// Destinations for the component being dragged. Faces and runes only go
+        /// into a face slot; a body only goes onto the die itself. Returns true for
+        /// the duration of any drag, even with no destinations at all, so the mod
+        /// keeps ownership of navigation rather than letting focus wander onto the
+        /// dice bag, which can never accept a face or rune.
+        /// </summary>
+        public static bool TryGetDraggedComponentTargets(List<GameObject> into)
+        {
+            into.Clear();
+
+            var active = GetActiveComponentDrag();
+            if (active == null) return false;
+
+            var ctrl = GetModController();
+            if (ctrl == null) return true;
+
+            try
+            {
                 if (active.componentType == ComponentPoolType.Body)
                 {
                     var slot = ctrl.diceModifier != null && ctrl.diceModifier.diceInput != null
                         ? ctrl.diceModifier.diceInput
                         : ctrl.modificationSlotInput;
-                    if (slot != null) into.Add(slot.gameObject);
+
+                    // A body needs a die present to be applied to.
+                    if (slot != null && slot.GetContainedDice() != null) into.Add(slot.gameObject);
                 }
                 else
                 {
@@ -437,14 +465,12 @@ namespace ArchonSoulGamepad
             }
             catch { }
 
-            return into.Count > 0;
+            return true;
         }
-
-        private static readonly List<GameObject> _componentTargetProbe = new List<GameObject>();
 
         public static bool IsDraggingComponent()
         {
-            return TryGetDraggedComponentTargets(_componentTargetProbe);
+            return GetActiveComponentDrag() != null;
         }
 
         /// <summary>
@@ -467,6 +493,14 @@ namespace ArchonSoulGamepad
             catch { }
         }
 
+        /// <summary>
+        /// Controls that B already performs are kept out of d-pad navigation, so a
+        /// screen's exit never absorbs a directional move. Note this is decided by
+        /// behaviour, not by the on-screen label: the Modify Dice screen's
+        /// "Continue" is named BackButton internally, and the spell screen's is
+        /// named ContinueButton. "ContinueRun" on the main menu is not an exit and
+        /// stays navigable.
+        /// </summary>
         public static bool IsCarryingDice()
         {
             if (!Available) return false;
