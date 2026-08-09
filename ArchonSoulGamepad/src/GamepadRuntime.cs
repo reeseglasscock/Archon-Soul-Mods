@@ -537,17 +537,18 @@ namespace ArchonSoulGamepad
                 else if (_focus.TryGetBackControl(out backGo, out backCenter))
                 {
                     // Popup screens such as character select have no Escape handler;
-                    // their own back button is the only way out.
+                    // their own back button is the only way out. In the pause menu
+                    // this is Resume, so B closes it.
                     Plugin.LogDiag("cancel -> back control '" + backGo.name + "'");
                     PointerDispatcher.SetHover(backGo, backCenter);
                     PointerDispatcher.Click(backGo, backCenter, PointerEventData.InputButton.Left);
                     _activationLockUntil = Time.unscaledTime + 0.4f;
                     _focus.Rescan(false, force: true);
                 }
-                else
-                {
-                    Patches.QueueEscape();
-                }
+
+                // No Escape fallback: the pause menu opens from Start only, so B
+                // never summons it as a side effect of there being nothing to
+                // cancel on the current screen.
             }
 
             if (_pad.Menu)

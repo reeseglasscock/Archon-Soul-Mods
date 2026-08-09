@@ -938,6 +938,25 @@ namespace ArchonSoulGamepad
             return IsTopMenuElement(go) || IsOnTopScreenLayer(go) || CollectionPopupOpen();
         }
 
+        private static float _nextPauseProbe;
+        private static bool _pauseOpen;
+
+        /// <summary>
+        /// True while the pause menu is up. Its buttons stay fully selectable:
+        /// Resume is a legitimate choice there, not just a way out, even though B
+        /// also presses it.
+        /// </summary>
+        public static bool IsPauseMenuOpen()
+        {
+            if (!Available) return false;
+            if (Time.unscaledTime < _nextPauseProbe) return _pauseOpen;
+
+            _nextPauseProbe = Time.unscaledTime + 0.3f;
+            try { _pauseOpen = UnityEngine.Object.FindFirstObjectByType<PauseMenu>() != null; }
+            catch { _pauseOpen = false; }
+            return _pauseOpen;
+        }
+
         public static bool IsCarryingDice()
         {
             if (!Available) return false;

@@ -142,7 +142,7 @@ namespace ArchonSoulGamepad
                         Center = center,
                         IsDiceSlot = isSlot,
                         IsWidget = isWidget,
-                        Navigable = !GameBridge.IsBackControl(go)
+                        Navigable = GameBridge.IsPauseMenuOpen() || !GameBridge.IsBackControl(go)
                     });
                 }
             }
