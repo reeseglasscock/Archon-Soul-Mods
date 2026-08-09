@@ -105,14 +105,14 @@ namespace ArchonSoulGamepad
 
         private static bool MousePositionPrefix(ref Vector3 __result)
         {
-            if (!VirtualPointer.Active) return true;
+            if (Plugin.ShuttingDown || !VirtualPointer.Active) return true;
             __result = new Vector3(VirtualPointer.Position.x, VirtualPointer.Position.y, 0f);
             return false;
         }
 
         private static bool GetKeyDownPrefix(KeyCode key, ref bool __result)
         {
-            if (!VirtualPointer.Active) return true;
+            if (Plugin.ShuttingDown || !VirtualPointer.Active) return true;
             if (key != KeyCode.Escape) return true;
             if (!ConsumeEscape()) return true;
 
@@ -122,7 +122,7 @@ namespace ArchonSoulGamepad
 
         private static bool GetMouseButtonPrefix(int button, ref bool __result)
         {
-            if (!VirtualPointer.Active) return true;
+            if (Plugin.ShuttingDown || !VirtualPointer.Active) return true;
             if (button == 0 && VirtualPointer.LeftDown) { __result = true; return false; }
             if (button == 1 && VirtualPointer.RightDown) { __result = true; return false; }
             return true;
@@ -130,7 +130,7 @@ namespace ArchonSoulGamepad
 
         private static bool GetMouseButtonDownPrefix(int button, ref bool __result)
         {
-            if (!VirtualPointer.Active) return true;
+            if (Plugin.ShuttingDown || !VirtualPointer.Active) return true;
             if (button == 0 && VirtualPointer.LeftPressedThisFrame) { __result = true; return false; }
             if (button == 1 && VirtualPointer.RightPressedThisFrame) { __result = true; return false; }
             return true;

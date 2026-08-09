@@ -58,7 +58,7 @@ namespace ArchonSoulGamepad
         /// </summary>
         public static void PushToInputSystem()
         {
-            if (!Active) return;
+            if (!Active || Plugin.ShuttingDown) return;
             var mouse = Mouse.current;
             if (mouse == null) return;
 

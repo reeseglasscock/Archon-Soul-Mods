@@ -70,6 +70,8 @@ namespace ArchonSoulGamepad
 
         private void Update()
         {
+            if (Plugin.ShuttingDown) return;
+
             VirtualPointer.BeginFrame();
             _pad.Poll();
             if (_pad.AnyActivity) _lastPadActivity = Time.unscaledTime;
@@ -464,10 +466,17 @@ namespace ArchonSoulGamepad
 
         private void LateUpdate()
         {
-            if (!_gamepadMode) return;
+            if (Plugin.ShuttingDown || !_gamepadMode) return;
 
             // The game's CursorManager re-shows the cursor on many screens.
             if (Cursor.visible) Cursor.visible = false;
+        }
+
+        private void OnApplicationQuit()
+        {
+            // Release the cursor and stop driving input before the engine tears down.
+            if (_gamepadMode) ExitGamepadMode();
+            _highlight.Destroy();
         }
 
         private void OnDestroy()

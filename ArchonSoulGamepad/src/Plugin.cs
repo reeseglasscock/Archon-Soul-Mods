@@ -7,10 +7,17 @@ using UnityEngine;
 
 namespace ArchonSoulGamepad
 {
-    [BepInPlugin(Guid, "Archon Soul Gamepad Support", "1.0.0")]
+    [BepInPlugin(Guid, "Archon Soul Gamepad Support", "1.0.2")]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "com.community.archonsoul.gamepad";
+
+        /// <summary>
+        /// Set the moment the app starts tearing down. Everything the mod does per
+        /// frame touches subsystems that are themselves shutting down, so all of it
+        /// has to stop at this point rather than race the engine.
+        /// </summary>
+        public static bool ShuttingDown { get; private set; }
 
         private static ManualLogSource _log;
         private static ConfigEntry<bool> _verbose;
@@ -48,14 +55,20 @@ namespace ArchonSoulGamepad
             _selfTestCfg = Config.Bind("General", "NavigationSelfTest", false,
                 "Log a one-off focus walk of the current screen shortly after startup. Diagnostic aid.");
 
+            _deviceChangeHandler = (device, change) =>
+            {
+                if (ShuttingDown) return;
+                LogInfo("input device " + change + ": " + device.GetType().Name + " (" + device.name + ")");
+            };
+
             LogInfo("initialising");
 
             GameBridge.Probe();
 
             try
             {
-                var harmony = new Harmony(Guid);
-                Patches.Apply(harmony);
+                _harmony = new Harmony(Guid);
+                Patches.Apply(_harmony);
             }
             catch (Exception e)
             {
@@ -66,8 +79,7 @@ namespace ArchonSoulGamepad
             DontDestroyOnLoad(host);
             host.hideFlags = HideFlags.HideAndDontSave;
 
-            var runtime = host.AddComponent<GamepadRuntime>();
-            runtime.Configure(_deadzone.Value, _repeatDelay.Value, _repeatRate.Value,
+            var runtime = host.AddComponent<GamepadRuntime>();            runtime.Configure(_deadzone.Value, _repeatDelay.Value, _repeatRate.Value,
                               ParseColor(_highlightColor.Value), _highlightThickness.Value,
                               _autoEnable.Value, _selfTestCfg.Value);
 
@@ -81,10 +93,50 @@ namespace ArchonSoulGamepad
                 LogWarn("debug harness ENABLED - the mod will drive itself");
             }
 
-            UnityEngine.InputSystem.InputSystem.onDeviceChange += (device, change) =>
-                LogInfo("input device " + change + ": " + device.GetType().Name + " (" + device.name + ")");
+            UnityEngine.InputSystem.InputSystem.onDeviceChange += _deviceChangeHandler;
+            Application.quitting += OnAppQuitting;
 
             LogInfo("ready - connect a controller and press any button");
+        }
+
+        private static Harmony _harmony;
+        private static Action<UnityEngine.InputSystem.InputDevice, UnityEngine.InputSystem.InputDeviceChange> _deviceChangeHandler;
+
+        /// <summary>
+        /// Detach everything before the engine tears itself down. Leaving the
+        /// device-change subscription and the Harmony detours in place kept the
+        /// process alive long after the window closed, which Steam then reported as
+        /// the game still running.
+        /// </summary>
+        private static void OnAppQuitting()
+        {
+            if (ShuttingDown) return;
+            ShuttingDown = true;
+
+            try
+            {
+                if (_deviceChangeHandler != null)
+                {
+                    UnityEngine.InputSystem.InputSystem.onDeviceChange -= _deviceChangeHandler;
+                    _deviceChangeHandler = null;
+                }
+            }
+            catch { }
+
+            try { GameBridge.RestoreClickToDrag(); }
+            catch { }
+
+            try
+            {
+                if (_harmony != null)
+                {
+                    _harmony.UnpatchSelf();
+                    _harmony = null;
+                }
+            }
+            catch { }
+
+            LogInfo("shut down cleanly");
         }
 
         private static Color ParseColor(string hex)
