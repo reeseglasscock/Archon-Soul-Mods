@@ -71,10 +71,29 @@ pressing anything on the pad switches back.
 | Left stick / D-pad | Move focus |
 | A | Activate — button, pick up a die, drop a carried die into the focused slot, or engage a setting |
 | B | Cancel — release a setting, return a carried die, cancel spell targeting, press the screen's Back button, otherwise pause |
-| X | Right-click the focused element |
+| X | Apply a held item (same as A), or right-click the focused element |
+| Y | Enter or leave the run's top bar |
 | LB / RB | Jump between groups of controls (dice pool, spell slots, settings columns) |
 | Start | Pause menu |
 
+### The run's top bar
+
+The bar across the top of a run is excluded from normal navigation, so the d-pad
+only reaches the screen you are on. Press **Y** to enter it, then cycle across it
+to read tooltips or press **A** to open a panel. **Y**, **B** or **down** leaves.
+
+### Dragging dice, spells and modifications
+
+While something is held, focus is limited to the places it can actually go, taken
+from the game's own validation rather than hard-coded per screen.
+
+- **A** or **X** places the held item
+- **B** returns it to where it came from, changing nothing
+
+On the Modify Dice screen, **A** on a bag die puts it straight into the edit slot
+(swapping out whatever is there), and **A** on the die in the edit slot returns it
+to the bag. A die's faces are reordered by picking one up and moving it; it holds
+position until you press a direction.
 ### Settings screens
 
 Each setting is one focus target rather than a row of separate arrows.
