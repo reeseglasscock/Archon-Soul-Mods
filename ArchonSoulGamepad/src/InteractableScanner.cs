@@ -165,6 +165,12 @@ namespace ArchonSoulGamepad
 
             if (mb is IPointerClickHandler) return true;
             if (mb is IPointerDownHandler) return true;
+
+            // Parts of the run's top bar, and the collection popups it opens, exist
+            // only to show a tooltip on hover. They are worth focusing there, since
+            // reading them is the point, but nowhere else.
+            if (mb is IPointerEnterHandler && GameBridge.IsTooltipBrowsingArea(mb.gameObject)) return true;
+
             return false;
         }
 

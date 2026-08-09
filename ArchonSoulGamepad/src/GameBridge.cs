@@ -501,6 +501,443 @@ namespace ArchonSoulGamepad
         /// named ContinueButton. "ContinueRun" on the main menu is not an exit and
         /// stays navigable.
         /// </summary>
+        private static FaceInputsPool _facePool;
+        private static int _facePoolFrame = -1;
+
+        /// <summary>
+        /// The die's face currently being dragged for reordering, or null. The pool
+        /// publishes this itself, so no reflection is needed.
+        /// </summary>
+        public static FaceModificationInput GetDraggedFace()
+        {
+            if (_facePoolFrame != Time.frameCount)
+            {
+                _facePoolFrame = Time.frameCount;
+                _facePool = null;
+
+                if (Available && GetModController() != null)
+                {
+                    try
+                    {
+                        var pools = UnityEngine.Object.FindObjectsByType<FaceInputsPool>(FindObjectsSortMode.None);
+                        foreach (var p in pools)
+                        {
+                            if (p == null || p.currentDraggedFaceModInput == null) continue;
+                            _facePool = p;
+                            break;
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            return _facePool != null ? _facePool.currentDraggedFaceModInput : null;
+        }
+
+        public static bool IsDraggingFace()
+        {
+            return GetDraggedFace() != null;
+        }
+
+        /// <summary>Current screen position of the face being reordered.</summary>
+        public static bool TryGetDraggedFaceScreenPoint(out Vector2 point)
+        {
+            point = Vector2.zero;
+            var dragged = GetDraggedFace();
+            if (dragged == null) return false;
+            return InteractableScanner.TryGetScreenPoint(dragged.transform, out point);
+        }
+
+        /// <summary>Index of the slot the dragged face currently occupies.</summary>
+        public static int GetDraggedFaceSlotIndex(List<Transform> slots)
+        {
+            var dragged = GetDraggedFace();
+            if (dragged == null || slots == null || slots.Count == 0) return -1;
+
+            int best = -1;
+            float bestDist = float.MaxValue;
+            for (int i = 0; i < slots.Count; i++)
+            {
+                if (slots[i] == null) continue;
+                float d = Mathf.Abs(slots[i].position.x - dragged.transform.position.x);
+                if (d < bestDist) { bestDist = d; best = i; }
+            }
+            return best;
+        }
+
+        /// <summary>Screen rectangle of the face being reordered.</summary>
+        public static bool TryGetDraggedFaceScreenRect(out Rect rect)
+        {
+            rect = default(Rect);
+            var dragged = GetDraggedFace();
+            if (dragged == null) return false;
+            return InteractableScanner.TryGetScreenRectFor(dragged.gameObject, out rect);
+        }
+
+        /// <summary>
+        /// The fixed slot positions a reordered face can occupy.
+        /// </summary>
+        public static bool TryGetFaceSlotAnchors(List<Transform> into)
+        {
+            into.Clear();
+            if (GetDraggedFace() == null || _facePool == null) return false;
+
+            try
+            {
+                var slots = _facePool.slotPositionList;
+                if (slots == null) return false;
+
+                foreach (var t in slots)
+                {
+                    if (t == null || !t.gameObject.activeInHierarchy) continue;
+                    into.Add(t);
+                }
+            }
+            catch { }
+
+            return into.Count > 0;
+        }
+
+        /// <summary>
+        /// Where to place the dragged face so the pool sorts it into the chosen
+        /// slot. The pool orders faces purely by transform.position.x, so sitting
+        /// exactly on a slot ties with whichever face occupies it and nothing
+        /// shifts aside. The bias therefore only has to clear that one face's
+        /// centre, by a few pixels in the direction of travel: enough to decide the
+        /// order, small enough that the face still reads as sitting in the gap.
+        /// </summary>
+        public static Vector2 GetFaceInsertPoint(Transform slot, int targetIndex, List<Transform> allSlots)
+        {
+            Vector2 slotPoint;
+            if (!InteractableScanner.TryGetScreenPoint(slot, out slotPoint)) return slotPoint;
+
+            var dragged = GetDraggedFace();
+            if (dragged == null || _facePool == null || allSlots == null || allSlots.Count < 2) return slotPoint;
+
+            // Which slot is the dragged face nearest right now?
+            int currentIndex = -1;
+            float bestDist = float.MaxValue;
+            for (int i = 0; i < allSlots.Count; i++)
+            {
+                if (allSlots[i] == null) continue;
+                float d = Mathf.Abs(allSlots[i].position.x - dragged.transform.position.x);
+                if (d < bestDist) { bestDist = d; currentIndex = i; }
+            }
+
+            if (currentIndex < 0 || targetIndex == currentIndex) return slotPoint;
+            float dir = targetIndex > currentIndex ? 1f : -1f;
+            Plugin.LogDiag("face insert: slot " + currentIndex + " -> " + targetIndex);
+
+            // Clear the centre of whichever face currently sits nearest that slot.
+            float occupantX = slotPoint.x;
+            try
+            {
+                var container = _facePool.faceInputContainer;
+                if (container != null)
+                {
+                    var faces = container.GetComponentsInChildren<FaceModificationInput>();
+                    float closest = float.MaxValue;
+                    foreach (var f in faces)
+                    {
+                        if (f == null || f == dragged) continue;
+
+                        Vector2 fp;
+                        if (!InteractableScanner.TryGetScreenPoint(f.transform, out fp)) continue;
+
+                        float d = Mathf.Abs(fp.x - slotPoint.x);
+                        if (d < closest) { closest = d; occupantX = fp.x; }
+                    }
+                }
+            }
+            catch { }
+
+            return new Vector2(occupantX + dir * 8f, slotPoint.y);
+        }
+
+        private static bool InteractableScannerBridge(Transform t, out Vector2 point)
+        {
+            return InteractableScanner.TryGetScreenPoint(t, out point);
+        }
+
+        /// <summary>
+        /// True when the focused object belongs to the die sitting in the modify
+        /// screen's edit slot.
+        /// </summary>
+        public static bool IsDieInEditSlot(GameObject go)
+        {
+            if (!Available || go == null) return false;
+
+            try
+            {
+                var ctrl = GetModController();
+                if (ctrl == null) return false;
+
+                var slot = GetEditSlot();
+                if (slot == null) return false;
+
+                var dice = slot.GetContainedDice();
+                if (dice == null) return false;
+
+                return go == dice.gameObject || go.transform.IsChildOf(dice.transform);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Takes the die out of the edit slot and puts it straight back in the bag,
+        /// in one action. Picking it up and then cancelling is the game's own two
+        /// step route; this performs both so a single press does the obvious thing.
+        /// </summary>
+        public static bool ReturnDieFromEditSlot(GameObject focused, Vector2 center)
+        {
+            if (!IsDieInEditSlot(focused)) return false;
+
+            PointerDispatcher.Click(focused, center, UnityEngine.EventSystems.PointerEventData.InputButton.Left);
+
+            if (!IsCarryingDice()) return false;
+
+            PointerDispatcher.ClearHover();
+            ClearDropHoverTargets();
+            return DropCarriedDice();
+        }
+
+        private static DiceInput GetEditSlot()
+        {
+            var ctrl = GetModController();
+            if (ctrl == null) return null;
+
+            return ctrl.diceModifier != null && ctrl.diceModifier.diceInput != null
+                ? ctrl.diceModifier.diceInput
+                : ctrl.modificationSlotInput;
+        }
+
+        /// <summary>
+        /// Swaps a bag die with the one already in the edit slot, in one action.
+        /// The sitting die is evicted through the game's own pick-up (which clears
+        /// the face pool and undo history) and returned to the bag, then the chosen
+        /// die is placed. Eviction is synchronous: pick-up reparents the die out of
+        /// the slot's holder, so the slot reads as empty immediately afterwards.
+        /// </summary>
+        public static bool TrySwapDieIntoEditSlot(GameObject focused, Vector2 center)
+        {
+            if (!Available || focused == null) return false;
+            if (IsDieInEditSlot(focused)) return false;
+
+            try
+            {
+                var slot = GetEditSlot();
+                if (slot == null) return false;
+
+                var existing = slot.GetContainedDice();
+                if (existing == null) return false;
+
+                if (focused.GetComponentInParent<Dice>() == null) return false;
+
+                var drag = existing.GetComponentInChildren<DiceDrag>();
+                if (drag == null) return false;
+
+                Rect dragRect;
+                if (!InteractableScanner.TryGetScreenRectFor(drag.gameObject, out dragRect)) return false;
+
+                PointerDispatcher.Click(drag.gameObject, dragRect.center,
+                    UnityEngine.EventSystems.PointerEventData.InputButton.Left);
+
+                if (IsCarryingDice())
+                {
+                    PointerDispatcher.ClearHover();
+                    ClearDropHoverTargets();
+                    DropCarriedDice();
+                }
+
+                return TryPlaceDieIntoEditSlot(focused, center);
+            }
+            catch (System.Exception e)
+            {
+                Plugin.LogDebug("TrySwapDieIntoEditSlot failed: " + e.Message);
+                return false;
+            }
+        }
+
+        public static bool TryPlaceDieIntoEditSlot(GameObject focused, Vector2 center)
+        {
+            if (!Available || focused == null) return false;
+            if (IsDieInEditSlot(focused)) return false;
+
+            try
+            {
+                var slot = GetEditSlot();
+                if (slot == null || slot.GetContainedDice() != null) return false;
+
+                if (focused.GetComponentInParent<Dice>() == null) return false;
+
+                Rect slotRect;
+                if (!InteractableScanner.TryGetScreenRectFor(slot.gameObject, out slotRect)) return false;
+
+                PointerDispatcher.Click(focused, center, UnityEngine.EventSystems.PointerEventData.InputButton.Left);
+                if (!IsCarryingDice()) return false;
+
+                // The drop resolves against whatever slot the game believes is
+                // hovered, so point it at the edit slot before ending the drag.
+                PointerDispatcher.SetHover(slot.gameObject, slotRect.center);
+                return DropCarriedDice();
+            }
+            catch (System.Exception e)
+            {
+                Plugin.LogDebug("TryPlaceDieIntoEditSlot failed: " + e.Message);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// True for controls in the run's top UI bar. That bar is present on every
+        /// in-run screen, so it is kept out of normal navigation and reached with a
+        /// dedicated toggle instead.
+        /// </summary>
+        public static bool IsTopMenuElement(GameObject go)
+        {
+            if (!Available || go == null) return false;
+
+            try
+            {
+                var run = RunManager.Instance;
+                if (run == null || run.topUIBarTransform == null) return false;
+                return go.transform.IsChildOf(run.topUIBarTransform);
+            }
+            catch { return false; }
+        }
+
+        public static bool HasTopMenu()
+        {
+            if (!Available) return false;
+            try
+            {
+                var run = RunManager.Instance;
+                return run != null && run.topUIBarTransform != null
+                    && run.topUIBarTransform.gameObject.activeInHierarchy;
+            }
+            catch { return false; }
+        }
+
+        private static float _nextPopupDump;
+
+        /// <summary>
+        /// Diagnostic: lists what is inside an open top-screen overlay, with the
+        /// pointer interfaces each component implements.
+        /// </summary>
+        public static void DumpTopScreenOverlay()
+        {
+            if (!Available) return;
+            if (Time.unscaledTime < _nextPopupDump) return;
+            if (!TopScreenOverlayOpen()) return;
+
+            _nextPopupDump = Time.unscaledTime + 6f;
+
+            try
+            {
+                var layer = RunManager.Instance.topScreenLayer;
+                Plugin.LogDiag("[popup] topScreenLayer children=" + layer.childCount);
+
+                var all = layer.GetComponentsInChildren<MonoBehaviour>(false);
+                int shown = 0;
+                foreach (var mb in all)
+                {
+                    if (mb == null || shown >= 40) continue;
+
+                    string flags = "";
+                    if (mb is UnityEngine.EventSystems.IPointerEnterHandler) flags += "enter ";
+                    if (mb is UnityEngine.EventSystems.IPointerClickHandler) flags += "click ";
+                    if (mb is UnityEngine.EventSystems.IPointerDownHandler) flags += "down ";
+                    if (mb is UnityEngine.UI.Selectable) flags += "selectable ";
+                    if (flags.Length == 0) continue;
+
+                    shown++;
+                    Plugin.LogDiag("[popup]   " + mb.gameObject.name + " : " + mb.GetType().Name + " [" + flags.Trim() + "]");
+                }
+
+                if (shown == 0)
+                    Plugin.LogDiag("[popup]   nothing on this layer implements pointer interfaces");
+            }
+            catch (System.Exception e)
+            {
+                Plugin.LogDiag("[popup] dump failed: " + e.Message);
+            }
+        }
+
+        private static float _nextPopupProbe;
+        private static bool _popupOpen;
+
+        /// <summary>
+        /// True while one of the collection popups is on screen. Checked at the
+        /// screen level rather than by walking each element's ancestors, because
+        /// the item containers are not necessarily parented under the object that
+        /// carries the popup component.
+        /// </summary>
+        public static bool CollectionPopupOpen()
+        {
+            if (!Available) return false;
+            if (Time.unscaledTime < _nextPopupProbe) return _popupOpen;
+
+            _nextPopupProbe = Time.unscaledTime + 0.5f;
+            _popupOpen = false;
+
+            try
+            {
+                _popupOpen =
+                    UnityEngine.Object.FindFirstObjectByType<DiceBodyCollectionPopup>() != null ||
+                    UnityEngine.Object.FindFirstObjectByType<DiceRunesCollectionPopup>() != null ||
+                    UnityEngine.Object.FindFirstObjectByType<SpellsCollectionPopup>() != null ||
+                    UnityEngine.Object.FindFirstObjectByType<BestiaryCollectionPopup>() != null ||
+                    UnityEngine.Object.FindFirstObjectByType<CharacterStatsCollectionPopup>() != null;
+            }
+            catch { }
+
+            return _popupOpen;
+        }
+
+        /// <summary>
+        /// True while an overlay is open on the run's top screen layer. The top bar
+        /// buttons clone their panels into RunManager.topScreenLayer rather than
+        /// using the CollectionPopup classes, which is why looking for those found
+        /// nothing.
+        /// </summary>
+        public static bool TopScreenOverlayOpen()
+        {
+            if (!Available) return false;
+
+            try
+            {
+                var run = RunManager.Instance;
+                if (run == null || run.topScreenLayer == null) return false;
+                return run.topScreenLayer.childCount > 0
+                    && run.topScreenLayer.gameObject.activeInHierarchy;
+            }
+            catch { return false; }
+        }
+
+        public static bool IsOnTopScreenLayer(GameObject go)
+        {
+            if (!Available || go == null) return false;
+
+            try
+            {
+                var run = RunManager.Instance;
+                if (run == null || run.topScreenLayer == null) return false;
+                return go.transform.IsChildOf(run.topScreenLayer);
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Areas whose contents exist to be read rather than clicked: the run's top
+        /// bar, and the panels it opens. Hover-only elements are worth focusing
+        /// here because their tooltip is the content.
+        /// </summary>
+        public static bool IsTooltipBrowsingArea(GameObject go)
+        {
+            if (go == null) return false;
+            return IsTopMenuElement(go) || IsOnTopScreenLayer(go) || CollectionPopupOpen();
+        }
+
         public static bool IsCarryingDice()
         {
             if (!Available) return false;

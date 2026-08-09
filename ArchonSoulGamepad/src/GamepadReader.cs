@@ -38,7 +38,7 @@ namespace ArchonSoulGamepad
         public Vector2 NavDirection { get; private set; }
         public bool NavTriggered { get; private set; }
 
-        public bool Submit, Cancel, Prev, Next, Menu, Alt;
+        public bool Submit, Cancel, Prev, Next, Menu, Alt, TopMenu;
         public bool AnyActivity { get; private set; }
 
         public void Poll()
@@ -90,13 +90,13 @@ namespace ArchonSoulGamepad
             Submit = gp.buttonSouth.wasPressedThisFrame;
             Cancel = gp.buttonEast.wasPressedThisFrame;
             Alt = gp.buttonWest.wasPressedThisFrame;
+            TopMenu = gp.buttonNorth.wasPressedThisFrame;
             Prev = gp.leftShoulder.wasPressedThisFrame;
             Next = gp.rightShoulder.wasPressedThisFrame;
             Menu = gp.startButton.wasPressedThisFrame;
 
-            AnyActivity = NavTriggered || Submit || Cancel || Alt || Prev || Next || Menu
-                          || raw.magnitude >= Deadzone
-                          || gp.buttonNorth.wasPressedThisFrame;
+            AnyActivity = NavTriggered || Submit || Cancel || Alt || Prev || Next || Menu || TopMenu
+                          || raw.magnitude >= Deadzone;
         }
 
         public static bool GamepadPresent

@@ -118,6 +118,12 @@ namespace ArchonSoulGamepad
                 return;
             }
 
+            if (BuildFaceSlotCandidates())
+            {
+                ValidateFocus();
+                return;
+            }
+
             if (BuildComponentDropCandidates())
             {
                 ValidateFocus();
@@ -152,7 +158,67 @@ namespace ArchonSoulGamepad
 
             if (includeDiceSlots) RestrictToDropTargets();
 
+            FilterTopMenu();
+
             ValidateFocus();
+        }
+
+        /// <summary>
+        /// The run's top bar is either the only thing selectable or entirely
+        /// excluded, never mixed in with a screen's own controls.
+        /// </summary>
+        public bool TopMenuMode;
+
+        private readonly List<Focusable> _topFiltered = new List<Focusable>();
+
+        private void FilterTopMenu()
+        {
+            if (!GameBridge.HasTopMenu()) return;
+
+            _topFiltered.Clear();
+            for (int i = 0; i < _candidates.Count; i++)
+            {
+                if (GameBridge.IsTopMenuElement(_candidates[i].Go) == TopMenuMode)
+                    _topFiltered.Add(_candidates[i]);
+            }
+
+            // Outside top-menu mode, a screen made up entirely of top bar controls
+            // would otherwise leave nothing selectable at all.
+            if (!TopMenuMode && _topFiltered.Count == 0) return;
+
+            _candidates.Clear();
+            _candidates.AddRange(_topFiltered);
+        }
+
+        private readonly List<Transform> _faceSlotBuffer = new List<Transform>();
+
+        /// <summary>Slot positions available while reordering the die's faces.</summary>
+        public List<Transform> FaceSlots { get { return _faceSlotBuffer; } }
+
+        private bool BuildFaceSlotCandidates()
+        {
+            if (!GameBridge.TryGetFaceSlotAnchors(_faceSlotBuffer)) return false;
+
+            _candidates.Clear();
+
+            foreach (var t in _faceSlotBuffer)
+            {
+                Vector2 sp;
+                if (!InteractableScanner.TryGetScreenPoint(t, out sp)) continue;
+                if (sp.x < 0f || sp.y < 0f || sp.x > Screen.width || sp.y > Screen.height) continue;
+
+                _candidates.Add(new Focusable
+                {
+                    Go = t.gameObject,
+                    ScreenRect = new Rect(sp.x - 55f, sp.y - 70f, 110f, 140f),
+                    Center = sp,
+                    IsDiceSlot = false,
+                    IsWidget = false,
+                    Navigable = true
+                });
+            }
+
+            return true;
         }
 
         private readonly List<GameObject> _componentTargets = new List<GameObject>();

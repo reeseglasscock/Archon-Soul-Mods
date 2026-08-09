@@ -29,8 +29,12 @@ namespace ArchonSoulGamepad
         private float _mouseMoveAccum;
         private GameObject _focusBeforeExit;
         private GameObject _lastFocused;
+        private GameObject _focusBeforeTopMenu;
         private bool _wasDragOverride;
         private float _cancelDragUntil;
+        private bool _draggingFace;
+        private GameObject _faceInsertFor;
+        private Vector2 _faceInsertPoint;
         private bool _selfTest;
         private bool _selfTestDone;
         private float _selfTestAt;
@@ -112,7 +116,9 @@ namespace ArchonSoulGamepad
             bool carrying = GameBridge.IsCarryingDice();
             bool draggingSpell = GameBridge.IsDraggingSpell();
             bool draggingComponent = GameBridge.IsDraggingComponent();
-            bool dragOverride = draggingSpell || draggingComponent;
+            bool draggingFace = GameBridge.IsDraggingFace();
+            bool dragOverride = draggingSpell || draggingComponent || draggingFace;
+            _draggingFace = draggingFace;
 
             // Picking a spell or a modification component up switches navigation to
             // that item's valid destinations. Focus is chosen once at that moment
@@ -127,8 +133,31 @@ namespace ArchonSoulGamepad
 
                 if (dragOverride)
                 {
+                    _faceInsertFor = null;
                     _focus.AcquireNearest(_focus.Center);
                     _focus.Pinned = true;
+
+                    // A newly picked up face must not drift. Anchor focus to the slot
+                    // the face actually occupies, by index rather than by nearest
+                    // distance, so the first directional press moves exactly one
+                    // place. Hold it exactly where it already sits until then.
+                    if (draggingFace)
+                    {
+                        int slotIndex = GameBridge.GetDraggedFaceSlotIndex(_focus.FaceSlots);
+                        if (slotIndex >= 0 && slotIndex < _focus.FaceSlots.Count)
+                            _focus.FocusObject(_focus.FaceSlots[slotIndex].gameObject);
+
+                        Vector2 restPoint;
+                        if (GameBridge.TryGetDraggedFaceScreenPoint(out restPoint))
+                        {
+                            _faceInsertPoint = restPoint;
+                            _faceInsertFor = _focus.Focused;
+                        }
+
+                        Plugin.LogDiag("face reorder started at slot " + slotIndex +
+                                       " of " + _focus.FaceSlots.Count);
+                    }
+
                     Plugin.LogDiag("drag started - anchored to '" +
                                    (_focus.Focused != null ? _focus.Focused.name : "?") + "'");
                 }
@@ -162,7 +191,12 @@ namespace ArchonSoulGamepad
             {
                 int dir = _pad.NavDirection.x > 0.5f ? 1 : (_pad.NavDirection.x < -0.5f ? -1 : 0);
 
-                if (_engaged)
+                if (_focus.TopMenuMode && _pad.NavDirection.y < -0.5f)
+                {
+                    // Down is a natural way out of a bar along the top edge.
+                    SetTopMenuMode(false);
+                }
+                else if (_engaged)
                 {
                     // Only horizontal input reaches the value; vertical is swallowed
                     // so the setting under edit cannot change out from under you.
@@ -175,6 +209,10 @@ namespace ArchonSoulGamepad
                     _focus.Move(_pad.NavDirection);
                 }
             }
+
+            // Leaving the run (or starting a drag) drops out of the top bar.
+            if (_focus.TopMenuMode && (!GameBridge.HasTopMenu() || dragOverride || carrying))
+                SetTopMenuMode(false);
 
             if (_engaged && (_engagedTarget == null || !_engagedTarget.activeInHierarchy))
                 Disengage("target-gone");
@@ -210,6 +248,8 @@ namespace ArchonSoulGamepad
                 _selfTestDone = true;
                 RunNavigationSelfTest();
             }
+
+            GameBridge.DumpTopScreenOverlay();
 
             if (Time.unscaledTime < _diagAt) return;
             _diagAt = Time.unscaledTime + 3f;
@@ -291,9 +331,33 @@ namespace ArchonSoulGamepad
 
             if (_focus.Focused == null) return;
 
-            VirtualPointer.Position = _focus.Center;
+            // Reordering a die's face needs the pointer placed between slots rather
+            // than on one, or the pool's x-sort cannot decide an order. The point is
+            // computed once per target and then held: recomputing it every frame
+            // chases the faces as they reflow, and once the gap opens the nearest
+            // face to that slot becomes the next one over, so the dragged face ends
+            // up hopping onto it.
+            if (_draggingFace)
+            {
+                if (_focus.Focused != _faceInsertFor)
+                {
+                    _faceInsertFor = _focus.Focused;
+                    int idx = _focus.FaceSlots.IndexOf(_focus.Focused.transform);
+                    _faceInsertPoint = idx >= 0
+                        ? GameBridge.GetFaceInsertPoint(_focus.Focused.transform, idx, _focus.FaceSlots)
+                        : _focus.Center;
+                }
+
+                VirtualPointer.Position = _faceInsertPoint;
+            }
+            else
+            {
+                _faceInsertFor = null;
+                VirtualPointer.Position = _focus.Center;
+            }
+
             VirtualPointer.PushToInputSystem();
-            _lastPushed = _focus.Center;
+            _lastPushed = VirtualPointer.Position;
 
             // Hover must track focus continuously: the game resolves dice drops and
             // unit targeting from whatever it believes the pointer is over.
@@ -336,6 +400,13 @@ namespace ArchonSoulGamepad
         {
             var target = _focus.Focused;
 
+            // Y moves in and out of the run's top bar.
+            if (_pad.TopMenu && !dragOverride && !carrying && !_engaged && GameBridge.HasTopMenu())
+            {
+                SetTopMenuMode(!_focus.TopMenuMode);
+                return;
+            }
+
             if (_pad.Submit)
             {
                 if (_engaged)
@@ -362,6 +433,25 @@ namespace ArchonSoulGamepad
                         PointerDispatcher.Click(target, _focus.Center, PointerEventData.InputButton.Left);
                     _focus.Rescan(carrying, force: true);
                 }
+                else if (target != null && GameBridge.IsDieInEditSlot(target))
+                {
+                    // Returning a die to the bag is a single press rather than
+                    // pick up followed by cancel.
+                    Plugin.LogDiag("returning die from edit slot to bag");
+                    GameBridge.ReturnDieFromEditSlot(target, _focus.Center);
+                    _activationLockUntil = Time.unscaledTime + 0.4f;
+                    _focus.Rescan(false, force: true);
+                }
+                else if (target != null &&
+                         (GameBridge.TryPlaceDieIntoEditSlot(target, _focus.Center) ||
+                          GameBridge.TrySwapDieIntoEditSlot(target, _focus.Center)))
+                {
+                    // A die from the bag goes straight into the edit slot,
+                    // swapping out whatever is already there.
+                    Plugin.LogDiag("placed die from bag into edit slot");
+                    _activationLockUntil = Time.unscaledTime + 0.4f;
+                    _focus.Rescan(false, force: true);
+                }
                 else if (target != null && GameBridge.IsEditableWidget(target))
                 {
                     Engage(target);
@@ -375,8 +465,20 @@ namespace ArchonSoulGamepad
                     else
                     {
                         Plugin.LogDiag("activate '" + target.name + "'");
+                        bool wasTopMenu = _focus.TopMenuMode;
                         PointerDispatcher.Click(target, _focus.Center, PointerEventData.InputButton.Left);
                         _activationLockUntil = Time.unscaledTime + 0.4f;
+
+                        // Opening something from the top bar hands navigation to
+                        // whatever just appeared, rather than keeping focus trapped
+                        // on the bar itself.
+                        if (wasTopMenu && IsClickable(target))
+                        {
+                            _focus.TopMenuMode = false;
+                            _focusBeforeTopMenu = null;
+                            Plugin.LogDiag("top menu: left for opened content");
+                        }
+
                         _focus.Rescan(carrying, force: true);
                     }
                 }
@@ -391,17 +493,34 @@ namespace ArchonSoulGamepad
                 {
                     Disengage("cancel");
                 }
+                else if (_focus.TopMenuMode)
+                {
+                    // B leaves the top bar rather than exiting the screen behind it.
+                    SetTopMenuMode(false);
+                }
                 else if (dragOverride)
                 {
-                    // Cancel: drop with no target hovered, which is how the game
-                    // returns an item to its origin. The pointer is parked off
-                    // screen for a few frames so nothing can re-acquire a target
-                    // before the drag actually ends.
-                    Plugin.LogDiag("cancelling drag - returning item");
-                    PointerDispatcher.ClearHover();
-                    GameBridge.ClearDropHoverTargets();
-                    _cancelDragUntil = Time.unscaledTime + 0.35f;
-                    VirtualPointer.PulseLeft();
+                    if (_draggingFace)
+                    {
+                        // Reordering has no "undo" in the game: the face simply
+                        // settles wherever the order currently puts it. Parking the
+                        // pointer off screen would sort it to the far left, so end
+                        // the drag in place instead.
+                        Plugin.LogDiag("ending face reorder");
+                        VirtualPointer.PulseLeft();
+                    }
+                    else
+                    {
+                        // Cancel: drop with no target hovered, which is how the game
+                        // returns an item to its origin. The pointer is parked off
+                        // screen for a few frames so nothing can re-acquire a target
+                        // before the drag actually ends.
+                        Plugin.LogDiag("cancelling drag - returning item");
+                        PointerDispatcher.ClearHover();
+                        GameBridge.ClearDropHoverTargets();
+                        _cancelDragUntil = Time.unscaledTime + 0.35f;
+                        VirtualPointer.PulseLeft();
+                    }
                 }
                 else if (carrying)
                 {
@@ -434,7 +553,7 @@ namespace ArchonSoulGamepad
             if (_pad.Menu)
                 Patches.QueueEscape();
 
-            if (_pad.Alt && !_engaged)
+            if (_pad.Alt && !_engaged && !_focus.TopMenuMode)
             {
                 if (dragOverride)
                 {
@@ -480,8 +599,61 @@ namespace ArchonSoulGamepad
             _pad.RestoreRepeatProfile();
         }
 
+        /// <summary>
+        /// Enters or leaves the run's top bar, remembering where focus was so the
+        /// screen is not re-entered at an arbitrary control.
+        /// </summary>
+        private void SetTopMenuMode(bool on)
+        {
+            if (on)
+            {
+                _focusBeforeTopMenu = _focus.Focused;
+                _focus.TopMenuMode = true;
+                _focus.Rescan(false, force: true);
+                _focus.AcquireNearest(new Vector2(Screen.width * 0.5f, Screen.height));
+                Plugin.LogDiag("top menu: entered");
+            }
+            else
+            {
+                _focus.TopMenuMode = false;
+                _focus.Rescan(false, force: true);
+
+                if (_focusBeforeTopMenu == null || !_focus.FocusObject(_focusBeforeTopMenu))
+                    _focus.AcquireNearest(new Vector2(Screen.width * 0.5f, Screen.height * 0.5f));
+
+                _focusBeforeTopMenu = null;
+                Plugin.LogDiag("top menu: left");
+            }
+        }
+
+        /// <summary>Whether activating this control actually does something.</summary>
+        private static bool IsClickable(GameObject go)
+        {
+            if (go == null) return false;
+            try
+            {
+                if (go.GetComponent<UnityEngine.UI.Selectable>() != null) return true;
+                return go.GetComponent(typeof(IPointerClickHandler)) != null;
+            }
+            catch { return false; }
+        }
+
         private void DrawHighlight()
         {
+            // While reordering, the thing being carried is the face itself, so the
+            // outline tracks it rather than the invisible slot anchor that drives
+            // the ordering. Otherwise the highlight sits beside the face and looks
+            // like it has jumped to a neighbour.
+            if (_draggingFace)
+            {
+                Rect faceRect;
+                if (GameBridge.TryGetDraggedFaceScreenRect(out faceRect))
+                {
+                    _highlight.Show(faceRect, false, true);
+                    return;
+                }
+            }
+
             if (_focus.Focused != null)
             {
                 bool armed = _confirmTarget == _focus.Focused && Time.unscaledTime < _confirmUntil;
