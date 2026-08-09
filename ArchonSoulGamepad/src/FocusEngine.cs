@@ -158,6 +158,8 @@ namespace ArchonSoulGamepad
 
             if (includeDiceSlots) RestrictToDropTargets();
 
+            RestrictToTargetableUnits();
+
             FilterTopMenu();
 
             ValidateFocus();
@@ -188,6 +190,40 @@ namespace ArchonSoulGamepad
 
             _candidates.Clear();
             _candidates.AddRange(_topFiltered);
+        }
+
+        private readonly List<GameObject> _targetUnits = new List<GameObject>();
+        private readonly List<Focusable> _targetFiltered = new List<Focusable>();
+
+        /// <summary>
+        /// While a spell is asking for a target, only the units it can hit are
+        /// selectable. Existing candidates are filtered rather than rebuilt, so the
+        /// reachability work already done still applies.
+        /// </summary>
+        private void RestrictToTargetableUnits()
+        {
+            if (!GameBridge.TryGetTargetableUnits(_targetUnits)) return;
+
+            _targetFiltered.Clear();
+            for (int i = 0; i < _candidates.Count; i++)
+            {
+                var go = _candidates[i].Go;
+                if (go == null) continue;
+
+                foreach (var unit in _targetUnits)
+                {
+                    if (go == unit || go.transform.IsChildOf(unit.transform))
+                    {
+                        _targetFiltered.Add(_candidates[i]);
+                        break;
+                    }
+                }
+            }
+
+            if (_targetFiltered.Count == 0) return;
+
+            _candidates.Clear();
+            _candidates.AddRange(_targetFiltered);
         }
 
         private readonly List<Transform> _faceSlotBuffer = new List<Transform>();

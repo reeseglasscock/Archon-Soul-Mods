@@ -957,6 +957,33 @@ namespace ArchonSoulGamepad
             return _pauseOpen;
         }
 
+        /// <summary>
+        /// Units a targeting spell can actually hit. The game switches on each
+        /// valid unit's targeting square when it asks for a target, so that flag is
+        /// the authoritative answer rather than anything the mod infers.
+        /// </summary>
+        public static bool TryGetTargetableUnits(List<GameObject> into)
+        {
+            into.Clear();
+            if (!Available || !IsTargeting()) return false;
+
+            try
+            {
+                var cc = CombatController.Instance;
+                if (cc == null) return false;
+
+                foreach (var u in cc.AllUnits)
+                {
+                    if (u == null || u.targetingSquare == null) continue;
+                    if (!u.targetingSquare.activeSelf) continue;
+                    into.Add(u.gameObject);
+                }
+            }
+            catch { }
+
+            return into.Count > 0;
+        }
+
         public static bool IsCarryingDice()
         {
             if (!Available) return false;
