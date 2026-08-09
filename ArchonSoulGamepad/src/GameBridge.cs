@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace ArchonSoulGamepad
@@ -33,8 +34,33 @@ namespace ArchonSoulGamepad
         public static bool IsDiceSlot(MonoBehaviour mb)
         {
             if (!Available) return false;
-            try { return mb is DiceInput; }
+            try { return mb is DiceInput || mb is SpellDiceInputAssigner; }
             catch { return false; }
+        }
+
+        /// <summary>
+        /// Whether this drop target would actually take the die currently held.
+        /// Used to snap focus to real placements instead of letting a carried die
+        /// roam over the whole screen.
+        /// </summary>
+        public static bool SlotAcceptsCarriedDice(GameObject go)
+        {
+            if (!Available || go == null) return false;
+
+            try
+            {
+                var dice = GlobalVars.currentlyDraggedDice;
+                if (dice == null) return false;
+
+                var input = go.GetComponent<DiceInput>();
+                if (input != null) return input.CheckInputDice(dice);
+
+                var assigner = go.GetComponent<SpellDiceInputAssigner>();
+                if (assigner != null) return assigner.CheckInputDice(dice);
+            }
+            catch { }
+
+            return false;
         }
 
         /// <summary>
@@ -122,7 +148,7 @@ namespace ArchonSoulGamepad
                         var m = btn.onClick.GetPersistentMethodName(i);
                         if (m == "CloseCharacterSelect" || m == "Back" || m == "Close" ||
                             m == "BackToMainMenu" || m == "Exit" || m == "Return" ||
-                            m == "ClosePopup" || m == "BackButtonPressed")
+                            m == "ClosePopup" || m == "BackButtonPressed" || m == "Resume")
                             return true;
                     }
                 }
@@ -134,6 +160,12 @@ namespace ArchonSoulGamepad
 
             var lower = name.ToLowerInvariant();
             if (lower.Contains("background")) return false;
+
+            // Several in-run screens are left via a Continue button rather than a
+            // back button, so treat that as the way out. "ContinueRun" on the main
+            // menu is excluded: cancelling should never start a run.
+            if (lower.Contains("continue")) return !lower.Contains("run");
+
             return lower.Contains("back") || lower.Contains("close") || lower.Contains("return");
         }
 
@@ -247,6 +279,98 @@ namespace ArchonSoulGamepad
             }
 
             return best;
+        }
+
+        /// <summary>
+        /// True while a spell is being dragged on the spell select screen. The flag
+        /// is private to the game, so it is read reflectively rather than inferred.
+        /// </summary>
+        public static bool IsDraggingSpell()
+        {
+            if (!Available) return false;
+
+            try
+            {
+                var ctrl = GetSpellController();
+                if (ctrl == null || ctrl.spellDragObjects == null) return false;
+
+                if (_spellDraggingField == null)
+                    _spellDraggingField = typeof(SpellSelectDrag).GetField("dragging",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                if (_spellDraggingField == null) return false;
+
+                foreach (var d in ctrl.spellDragObjects)
+                {
+                    if (d == null) continue;
+                    if ((bool)_spellDraggingField.GetValue(d)) return true;
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        private static System.Reflection.FieldInfo _spellDraggingField;
+        private static SpellSelectScreenController _spellCtrl;
+        private static float _nextSpellCtrlProbe;
+
+        /// <summary>
+        /// Cached lookup. Rescans run several times a second on screens with dozens
+        /// of canvases, so a scene-wide search per scan is not affordable.
+        /// </summary>
+        private static SpellSelectScreenController GetSpellController()
+        {
+            if (_spellCtrl != null) return _spellCtrl;
+            if (Time.unscaledTime < _nextSpellCtrlProbe) return null;
+
+            _nextSpellCtrlProbe = Time.unscaledTime + 1f;
+            try { _spellCtrl = UnityEngine.Object.FindFirstObjectByType<SpellSelectScreenController>(); }
+            catch { _spellCtrl = null; }
+            return _spellCtrl;
+        }
+
+        /// <summary>
+        /// Fixed slot anchors for every spell zone. The spells themselves reflow
+        /// continuously while one is held, so focusing them creates a feedback loop:
+        /// focus moves the pointer, the pointer re-sorts the zone, which moves the
+        /// focus again. The anchors never move, so they are stable drop targets.
+        /// </summary>
+        public static bool TryGetSpellSlotAnchors(List<Transform> into)
+        {
+            into.Clear();
+            if (!Available) return false;
+
+            try
+            {
+                var ctrl = GetSpellController();
+                if (ctrl == null) return false;
+
+                AddZoneAnchors(ctrl.equippedSpellsZone, into);
+                AddZoneAnchors(ctrl.reserveSpellsZone, into);
+                AddZoneAnchors(ctrl.trashZone, into);
+            }
+            catch { }
+
+            return into.Count > 0;
+        }
+
+        private static void AddZoneAnchors(SpellSelectZone zone, List<Transform> into)
+        {
+            if (zone == null || zone.slotPositions == null) return;
+
+            int max = zone.maxSpellsInZone > 0
+                ? Mathf.Min(zone.slotPositions.Count, zone.maxSpellsInZone)
+                : zone.slotPositions.Count;
+
+            for (int i = 0; i < max; i++)
+            {
+                var t = zone.slotPositions[i];
+                if (t == null || !t.gameObject.activeInHierarchy) continue;
+                // The slot the spell came from stays selectable: putting it back
+                // where it started is a legitimate choice.
+                into.Add(t);
+            }
         }
 
         public static bool IsCarryingDice()

@@ -111,6 +111,13 @@ namespace ArchonSoulGamepad
             if (!force && Time.unscaledTime < _nextScan) return;
             _nextScan = Time.unscaledTime + ScanInterval;
 
+            // A held spell takes over the whole screen's navigation.
+            if (GameBridge.IsDraggingSpell() && BuildSpellAnchorCandidates())
+            {
+                ValidateFocus();
+                return;
+            }
+
             _candidates.Clear();
             _candidates.AddRange(InteractableScanner.Scan(includeDiceSlots, Focused));
 
@@ -137,7 +144,69 @@ namespace ArchonSoulGamepad
                 _candidates.AddRange(InteractableScanner.Scan(includeDiceSlots, Focused));
             }
 
+            if (includeDiceSlots) RestrictToDropTargets();
+
             ValidateFocus();
+        }
+
+        private readonly List<Transform> _anchorBuffer = new List<Transform>();
+
+        /// <summary>
+        /// Replaces the candidate set with the spell screen's fixed slot anchors
+        /// while a spell is held, so focus cannot chase the spells as they reflow.
+        /// </summary>
+        private bool BuildSpellAnchorCandidates()
+        {
+            if (!GameBridge.TryGetSpellSlotAnchors(_anchorBuffer)) return false;
+
+            _candidates.Clear();
+
+            foreach (var t in _anchorBuffer)
+            {
+                Vector2 sp;
+                if (!InteractableScanner.TryGetScreenPoint(t, out sp)) continue;
+                if (sp.x < 0f || sp.y < 0f || sp.x > Screen.width || sp.y > Screen.height) continue;
+
+                var rect = new Rect(sp.x - 70f, sp.y - 90f, 140f, 180f);
+                _candidates.Add(new Focusable
+                {
+                    Go = t.gameObject,
+                    ScreenRect = rect,
+                    Center = sp,
+                    IsDiceSlot = false,
+                    IsWidget = false
+                });
+            }
+
+            return _candidates.Count > 0;
+        }
+
+        private readonly List<Focusable> _dropTargets = new List<Focusable>();
+
+        /// <summary>
+        /// While a die is held, focus is limited to places it can actually go.
+        /// Otherwise the d-pad wanders across unrelated buttons and the player has
+        /// to aim a die at a slot by eye, which is exactly what a cursor-free
+        /// scheme is meant to avoid. Falls back progressively so a screen we do not
+        /// understand never becomes unusable.
+        /// </summary>
+        private void RestrictToDropTargets()
+        {
+            _dropTargets.Clear();
+
+            for (int i = 0; i < _candidates.Count; i++)
+                if (_candidates[i].IsDiceSlot && GameBridge.SlotAcceptsCarriedDice(_candidates[i].Go))
+                    _dropTargets.Add(_candidates[i]);
+
+            if (_dropTargets.Count == 0)
+                for (int i = 0; i < _candidates.Count; i++)
+                    if (_candidates[i].IsDiceSlot)
+                        _dropTargets.Add(_candidates[i]);
+
+            if (_dropTargets.Count == 0) return;
+
+            _candidates.Clear();
+            _candidates.AddRange(_dropTargets);
         }
 
         /// <summary>

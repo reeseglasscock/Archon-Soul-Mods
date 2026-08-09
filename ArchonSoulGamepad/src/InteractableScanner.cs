@@ -195,6 +195,34 @@ namespace ArchonSoulGamepad
             return new Rect(xMin, yMin, xMax - xMin, yMax - yMin);
         }
 
+        /// <summary>Screen position of an arbitrary transform, using its canvas camera.</summary>
+        public static bool TryGetScreenPoint(Transform t, out Vector2 point)
+        {
+            point = Vector2.zero;
+            if (t == null) return false;
+
+            var canvas = t.GetComponentInParent<Canvas>();
+            Camera cam = null;
+            if (canvas != null)
+            {
+                var root = canvas.rootCanvas != null ? canvas.rootCanvas : canvas;
+                if (root.renderMode != RenderMode.ScreenSpaceOverlay)
+                {
+                    cam = root.worldCamera;
+                    if (cam == null) cam = Camera.main;
+                }
+            }
+            else
+            {
+                cam = Camera.main;
+            }
+
+            try { point = RectTransformUtility.WorldToScreenPoint(cam, t.position); }
+            catch { return false; }
+
+            return true;
+        }
+
         private static bool TryGetRawScreenRect(GameObject go, out Rect rect)
         {
             rect = default(Rect);

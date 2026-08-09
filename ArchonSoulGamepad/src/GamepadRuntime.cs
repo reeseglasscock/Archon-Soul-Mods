@@ -29,6 +29,7 @@ namespace ArchonSoulGamepad
         private float _mouseMoveAccum;
         private GameObject _focusBeforeExit;
         private GameObject _lastFocused;
+        private bool _wasDraggingSpell;
         private bool _selfTest;
         private bool _selfTestDone;
         private float _selfTestAt;
@@ -108,6 +109,34 @@ namespace ArchonSoulGamepad
             }
 
             bool carrying = GameBridge.IsCarryingDice();
+            bool draggingSpell = GameBridge.IsDraggingSpell();
+
+            // Picking a spell up switches navigation to the fixed slot anchors.
+            // Focus is chosen once at that moment and then held: the zone re-sorts
+            // itself continuously while a spell is held, and re-acquiring against a
+            // shifting anchor list makes the selection crawl on its own.
+            if (draggingSpell != _wasDraggingSpell)
+            {
+                _wasDraggingSpell = draggingSpell;
+                _focus.Pinned = false;
+                _focus.Rescan(carrying, force: true);
+
+                if (draggingSpell)
+                {
+                    _focus.AcquireNearest(_focus.Center);
+                    _focus.Pinned = true;
+                    Plugin.LogDiag("spell drag started - anchored to '" +
+                                   (_focus.Focused != null ? _focus.Focused.name : "?") + "'");
+                }
+            }
+            else if (draggingSpell)
+            {
+                _focus.Pinned = true;
+            }
+            else if (!_engaged)
+            {
+                _focus.Pinned = false;
+            }
 
             // Entering or leaving a carry changes what is worth focusing,
             // so force an immediate rescan rather than waiting for the timer.
@@ -154,7 +183,7 @@ namespace ArchonSoulGamepad
 
             SuppressUiSelection();
             SyncPointer();
-            HandleButtons(carrying);
+            HandleButtons(carrying, draggingSpell);
             DrawHighlight();
             Diagnostics(carrying);
         }
@@ -288,7 +317,7 @@ namespace ArchonSoulGamepad
             return false;
         }
 
-        private void HandleButtons(bool carrying)
+        private void HandleButtons(bool carrying, bool draggingSpell)
         {
             var target = _focus.Focused;
 
@@ -297,6 +326,14 @@ namespace ArchonSoulGamepad
                 if (_engaged)
                 {
                     Disengage("submit");
+                }
+                else if (draggingSpell)
+                {
+                    // The game ends a spell drag from its own held-then-released
+                    // mouse check, so pulse the virtual button rather than trying
+                    // to reproduce its placement logic.
+                    Plugin.LogDiag("dropping spell at '" + (target != null ? target.name : "?") + "'");
+                    VirtualPointer.PulseLeft();
                 }
                 else if (Time.unscaledTime < _activationLockUntil)
                 {
@@ -338,6 +375,10 @@ namespace ArchonSoulGamepad
                 if (_engaged)
                 {
                     Disengage("cancel");
+                }
+                else if (draggingSpell)
+                {
+                    VirtualPointer.PulseLeft();
                 }
                 else if (carrying)
                 {
