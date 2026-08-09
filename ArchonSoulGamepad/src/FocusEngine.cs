@@ -103,6 +103,7 @@ namespace ArchonSoulGamepad
         }
 
         private float _nextScan;
+        private float _nextEmptyReport;
         private const float ScanInterval = 0.15f;
 
         public void Rescan(bool includeDiceSlots, bool force = false)
@@ -112,6 +113,29 @@ namespace ArchonSoulGamepad
 
             _candidates.Clear();
             _candidates.AddRange(InteractableScanner.Scan(includeDiceSlots, Focused));
+
+            // A screen with nothing focusable is always a bug. Immediately re-scan
+            // with reject reporting so the log explains itself without anyone
+            // having to reproduce it with a debug flag turned on.
+            if (_candidates.Count == 0 && Time.unscaledTime >= _nextEmptyReport)
+            {
+                _nextEmptyReport = Time.unscaledTime + 5f;
+                InteractableScanner.DebugRejects = true;
+                InteractableScanner.Scan(includeDiceSlots, Focused);
+                InteractableScanner.DebugRejects = false;
+
+                var rejects = InteractableScanner.DrainRejects();
+                var msg = "no focusable elements found (canvases=" +
+                          InteractableScanner.ExaminedRoots + "). rejects: " + rejects;
+
+                // Nothing rejected means there was genuinely nothing to find,
+                // which is normal on loading and splash screens.
+                if (string.IsNullOrEmpty(rejects)) Plugin.LogDiag(msg);
+                else Plugin.LogWarn(msg);
+
+                _candidates.Clear();
+                _candidates.AddRange(InteractableScanner.Scan(includeDiceSlots, Focused));
+            }
 
             ValidateFocus();
         }

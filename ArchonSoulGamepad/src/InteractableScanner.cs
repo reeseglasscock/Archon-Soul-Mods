@@ -65,77 +65,81 @@ namespace ArchonSoulGamepad
             _curSeen.Clear();
             var seen = new HashSet<GameObject>();
 
-            for (int s = 0; s < SceneManager.sceneCount; s++)
-            {
-                var scene = SceneManager.GetSceneAt(s);
-                if (!scene.isLoaded) continue;
+            // Walk root canvases rather than scene roots: UI parented under
+            // DontDestroyOnLoad lives in a scene that SceneManager does not
+            // enumerate, which would make whole in-run screens invisible here.
+            Canvas[] canvases;
+            try { canvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Exclude, FindObjectsSortMode.None); }
+            catch { canvases = new Canvas[0]; }
 
-                GameObject[] roots;
-                try { roots = scene.GetRootGameObjects(); }
+            ExaminedRoots = 0;
+
+            foreach (var canvas in canvases)
+            {
+                if (canvas == null || !canvas.isActiveAndEnabled) continue;
+                if (!canvas.isRootCanvas) continue;
+
+                var root = canvas.gameObject;
+                if (!root.activeInHierarchy) continue;
+                ExaminedRoots++;
+
+                Buffer.Clear();
+                try { root.GetComponentsInChildren(false, Buffer); }
                 catch { continue; }
 
-                foreach (var root in roots)
+                foreach (var mb in Buffer)
                 {
-                    if (root == null || !root.activeInHierarchy) continue;
+                    if (mb == null) continue;
+                    var go = mb.gameObject;
+                    if (!go.activeInHierarchy) continue;
+                    if (seen.Contains(go)) continue;
 
-                    Buffer.Clear();
-                    try { root.GetComponentsInChildren(false, Buffer); }
-                    catch { continue; }
-
-                    foreach (var mb in Buffer)
+                    bool isSlot = GameBridge.IsDiceSlot(mb);
+                    if (!Qualifies(mb, isSlot, includeDiceSlots))
                     {
-                        if (mb == null) continue;
-                        var go = mb.gameObject;
-                        if (!go.activeInHierarchy) continue;
-                        if (seen.Contains(go)) continue;
-
-                        bool isSlot = GameBridge.IsDiceSlot(mb);
-                        if (!Qualifies(mb, isSlot, includeDiceSlots))
-                        {
-                            if (DebugRejects && (mb is Selectable || mb is IPointerClickHandler))
-                                Reject(go, "not-qualified(" + mb.GetType().Name + ")");
-                            continue;
-                        }
-
-                        // Collapse settings rows (arrow buttons, slider handles) into
-                        // the single widget the player thinks of as "the setting".
-                        var widgetRoot = GameBridge.GetWidgetRoot(mb);
-                        bool isWidget = widgetRoot != null;
-                        if (isWidget) go = widgetRoot;
-                        if (seen.Contains(go)) continue;
-
-                        Rect rect;
-                        if (!TryGetScreenRect(go, out rect)) { Reject(go, "no-rect"); continue; }
-                        if (rect.width < 4f || rect.height < 4f) { Reject(go, "too-small"); continue; }
-
-                        var center = rect.center;
-                        if (!IsFullyOnScreen(rect, center))
-                        {
-                            Reject(go, string.Format("offscreen(rect={0},screen={1}x{2})",
-                                rect, Screen.width, Screen.height));
-                            continue;
-                        }
-
-                        int id = go.GetInstanceID();
-                        _curSeen.Add(id);
-
-                        // The focused element is exempt: it is the one we are
-                        // actively hovering, so it is expected to be moving.
-                        if (!_prevSeen.Contains(id) && go != keepAlways) { Reject(go, "new-this-scan"); continue; }
-
-                        if (!IsHittable(go, center, rect) && !(isWidget && IsWidgetReachable(go)))
-                        { Reject(go, "not-hittable"); continue; }
-
-                        seen.Add(go);
-                        Result.Add(new Focusable
-                        {
-                            Go = go,
-                            ScreenRect = rect,
-                            Center = center,
-                            IsDiceSlot = isSlot,
-                            IsWidget = isWidget
-                        });
+                        if (DebugRejects && (mb is Selectable || mb is IPointerClickHandler))
+                            Reject(go, "not-qualified(" + mb.GetType().Name + ")");
+                        continue;
                     }
+
+                    // Collapse settings rows (arrow buttons, slider handles) into
+                    // the single widget the player thinks of as "the setting".
+                    var widgetRoot = GameBridge.GetWidgetRoot(mb);
+                    bool isWidget = widgetRoot != null;
+                    if (isWidget) go = widgetRoot;
+                    if (seen.Contains(go)) continue;
+
+                    Rect rect;
+                    if (!TryGetScreenRect(go, out rect)) { Reject(go, "no-rect"); continue; }
+                    if (rect.width < 4f || rect.height < 4f) { Reject(go, "too-small"); continue; }
+
+                    var center = rect.center;
+                    if (!IsFullyOnScreen(rect, center))
+                    {
+                        Reject(go, string.Format("offscreen(rect={0},screen={1}x{2})",
+                            rect, Screen.width, Screen.height));
+                        continue;
+                    }
+
+                    int id = go.GetInstanceID();
+                    _curSeen.Add(id);
+
+                    // The focused element is exempt: it is the one we are
+                    // actively hovering, so it is expected to be moving.
+                    if (!_prevSeen.Contains(id) && go != keepAlways) { Reject(go, "new-this-scan"); continue; }
+
+                    if (!IsHittable(go, center, rect) && !(isWidget && IsWidgetReachable(go)))
+                    { Reject(go, "not-hittable"); continue; }
+
+                    seen.Add(go);
+                    Result.Add(new Focusable
+                    {
+                        Go = go,
+                        ScreenRect = rect,
+                        Center = center,
+                        IsDiceSlot = isSlot,
+                        IsWidget = isWidget
+                    });
                 }
             }
 
@@ -145,6 +149,8 @@ namespace ArchonSoulGamepad
 
             return Result;
         }
+
+        public static int ExaminedRoots { get; private set; }
 
         private static bool Qualifies(MonoBehaviour mb, bool isSlot, bool includeDiceSlots)
         {
@@ -198,7 +204,18 @@ namespace ArchonSoulGamepad
             var canvas = rt.GetComponentInParent<Canvas>();
             if (canvas == null) return false;
 
-            var cam = canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+            // Render mode and camera are only meaningful on the root canvas. In-run
+            // screens nest canvases and are driven in Screen Space - Camera, so
+            // reading these from the nearest canvas produced garbage coordinates and
+            // made every control look unreachable.
+            var root = canvas.rootCanvas != null ? canvas.rootCanvas : canvas;
+
+            Camera cam = null;
+            if (root.renderMode != RenderMode.ScreenSpaceOverlay)
+            {
+                cam = root.worldCamera;
+                if (cam == null) cam = Camera.main;
+            }
 
             try { rt.GetWorldCorners(Corners); }
             catch { return false; }

@@ -76,6 +76,8 @@ namespace ArchonSoulGamepad
             {
                 var harness = host.AddComponent<DebugHarness>();
                 harness.Focus = runtime.FocusEngineRef;
+                DebugHarness.Scenario = Config.Bind("General", "HarnessScenario", "settings",
+                    "Developer only: which scripted sequence to run ('settings' or 'continuerun').").Value;
                 LogWarn("debug harness ENABLED - the mod will drive itself");
             }
 

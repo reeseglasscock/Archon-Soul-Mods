@@ -37,6 +37,48 @@ namespace ArchonSoulGamepad
             yield return new WaitForSecondsRealtime(3f);
             Report("main menu");
 
+            if (Scenario == "continuerun")
+            {
+                yield return ContinueRunScenario();
+                yield break;
+            }
+
+            yield return SettingsScenario();
+        }
+
+        public static string Scenario = "settings";
+
+        /// <summary>
+        /// Resumes the existing save and observes whatever screen it lands on,
+        /// without activating anything, so in-run screens can be inspected safely.
+        /// </summary>
+        private IEnumerator ContinueRunScenario()
+        {
+            if (!Focus.FocusByName("ContinueRun"))
+            {
+                Plugin.LogWarn("[harness] no ContinueRun button on this profile");
+                yield break;
+            }
+
+            Plugin.LogInfo("[harness] continuing existing run (read-only observation)");
+            yield return Activate();
+
+            for (int i = 0; i < 14; i++)
+            {
+                yield return new WaitForSecondsRealtime(2f);
+                Report("run t+" + ((i + 1) * 2) + "s");
+            }
+
+            InteractableScanner.DebugRejects = true;
+            yield return new WaitForSecondsRealtime(0.5f);
+            Plugin.LogInfo("[harness] REJECTS: " + InteractableScanner.DrainRejects());
+            InteractableScanner.DebugRejects = false;
+
+            Plugin.LogInfo("[harness] observation complete - nothing was activated");
+        }
+
+        private IEnumerator SettingsScenario()
+        {
             // Settings screen: verify each row collapses to one widget and that
             // stepping a value works without repeated presses.
             if (Focus.FocusByName("Settings"))
